@@ -11,7 +11,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parent
 WEB = SRC.parent
 DIST = WEB / "dist"
-JS = ["engine.js", "core.js", "widgets_basics.js", "widgets_attn.js", "widgets_model.js", "python.js", "learn.js", "toy.js", "lessons_engine.js", "lessons_content.js"]
+JS = ["engine.js", "core.js", "widgets_basics.js", "widgets_attn.js", "widgets_model.js", "python.js", "learn.js", "toy.js", "lessons_engine.js", "lessons_content.js", "challenges.js"]
 
 HEAD = """<meta charset="utf-8">
 <title>Inside the Transformer</title>

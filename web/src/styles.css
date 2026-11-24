@@ -355,3 +355,24 @@ table.smat tr.hi td, table.smat td.hi { background: var(--accent-soft); }
 .onehot .sw.on small { color: var(--blk-ink); }
 ol.story li { margin: 0.45rem 0; }
 @media (max-width: 600px) { .step-card { padding: 2.4rem 0.9rem 1rem; } .vrow { grid-template-columns: 4.8rem 1fr 2.9rem; } }
+
+/* ======================= challenges + sandbox ======================= */
+.ch-card { border: 2px solid var(--c-pos); border-radius: 14px; padding: 0.9rem 1rem; background: var(--bg); display: flex; flex-direction: column; gap: 0.6rem; margin: 0.4rem 0; min-width: 0; }
+.ch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.ch-head b { font-family: var(--f-display); font-size: 1.08rem; }
+.ch-type { font: 600 0.72rem var(--f-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.ch-head .badge { margin-left: auto; }
+.ch-body { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.ch-fields { display: flex; flex-wrap: wrap; gap: 0.6rem 1.2rem; }
+.ch-feedback p { margin: 0.3rem 0; }
+.ok-line { color: var(--good); font-weight: 600; }
+.symptom { border: 1px dashed var(--bad); border-radius: 10px; padding: 0.7rem; display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.symptom.ok { border-color: var(--good); }
+.levels { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.flow.assemble { min-height: 2.4rem; padding: 0.4rem; border: 1px dashed var(--line); border-radius: 10px; }
+.flow button.shape { border: 0; cursor: pointer; font: 500 0.85rem var(--f-mono); padding: 0.4rem 0.65rem; }
+.flow button.shape:hover { outline: 2px solid var(--accent); }
+.hub-group { max-width: 52rem; margin: 1.5rem auto 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.sb-word { display: inline-flex; align-items: flex-start; }
+.sb-x { border: 0; background: transparent; color: var(--faint); cursor: pointer; font-size: 0.9rem; padding: 0 0.15rem; }
+.sb-x:hover { color: var(--bad); }

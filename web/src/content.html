@@ -14,6 +14,10 @@
       <a href="#l8"><span class="n">8</span>How it learns<span class="done"></span></a>
       <a href="#l9"><span class="n">9</span>Explain it like an expert<span class="done"></span></a>
     </nav>
+    <nav class="nav-group"><h4>Practice</h4>
+      <a href="#challenges"><span class="n">★</span>Challenges<span class="done mono" id="ch-count"></span></a>
+      <a href="#lab-sandbox"><span class="n">✎</span>Sentence sandbox</a>
+    </nav>
     <nav class="nav-group"><h4>Lab</h4>
       <a href="#lab-inspector"><span class="n">◆</span>Model inspector</a>
       <a href="#lab-attention"><span class="n">◆</span>Attention calculator</a>
@@ -35,7 +39,7 @@
       <div class="eyebrow"><span class="pill">for complete beginners</span><span class="pill">9 lessons · 72 one-minute steps</span></div>
       <h1>Inside the Transformer</h1>
       <p class="lede">No background needed. We follow one sentence, <i>"the cat sat on the mat because it was tired"</i>, and work out, number by number, how a Transformer figures out that "it" means the cat. Every idea is a one-minute step you can poke, predict and replay.</p>
-      <p><a class="btn primary" href="#l1">Start lesson 1</a> <a class="btn" href="#lab-inspector">Or explore a real trained model</a></p>
+      <p><a class="btn primary" href="#l1">Start lesson 1</a> <a class="btn" href="#challenges">Challenges</a> <a class="btn" href="#lab-inspector">Or explore a real trained model</a></p>
     </div>
     <figure data-widget="hero-demo" style="margin:0"></figure>
   </div>
@@ -70,6 +74,11 @@
 <section class="view" id="view-l9" data-title="9 · Explain it like an expert" hidden></section>
 
 <!-- ============================== LAB ============================== -->
+<section class="view" id="view-challenges" data-title="Challenges" hidden></section>
+<section class="view" id="view-lab-sandbox" data-title="Sentence sandbox" hidden>
+  <header><div class="eyebrow"><span class="pill">Practice</span></div><h1>Sentence sandbox</h1><p class="lede">Any sentence, any word, both heads: change the meanings and the questions, and watch attention follow the arithmetic.</p></header>
+  <figure data-widget="sandbox"></figure>
+</section>
 <section class="view" id="view-lab-inspector" data-title="Model inspector" hidden>
   <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Model inspector</h1><p class="lede">Type any date. Pick any of the 5 trained models or any training snapshot. Follow it through tokens, embeddings, every encoder head, every decoding step and every cross-attention map.</p></header>
   <figure data-widget="inspector" data-opts='{"lab":true}'></figure>

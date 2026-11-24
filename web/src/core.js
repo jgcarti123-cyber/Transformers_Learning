@@ -300,6 +300,8 @@ const Router = {
     if (m) { name = m[1]; step = +m[2] - 1; }
     if (!this.views.includes(name)) name = "start";
     if (typeof Lessons !== "undefined" && Lessons.byId[name]) Lessons.render(name, step);
+    if (name === "challenges" && typeof renderHub === "function") renderHub();
+    if (typeof Challenges !== "undefined") Challenges.refresh();
     $$(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
     const view = $("#view-" + name);
     Widgets.mountIn(view);
