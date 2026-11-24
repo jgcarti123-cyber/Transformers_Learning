@@ -1,0 +1,374 @@
+#%% md
+# Part 5 — Train it, look inside it, break it
+
+⏱ **~2.5 hours** · 📁 everything happens in this notebook (it uses your `minitf/` code) · 📄 paper §5, §6.2
+
+**After this notebook you can explain:**
+- **teacher forcing**, and why training is parallel but generation is sequential
+- greedy decoding (and what beam search, sampling and the KV cache are)
+- what the attention heads of a trained model actually do, **because you'll have looked**
+- what each component is worth, measured by removing it (ablations)
+
+#%% code
+# Setup: run this cell first.
+%load_ext autoreload
+%autoreload 2
+import sys, pathlib
+root = pathlib.Path.cwd()
+while not (root / "minitf").is_dir() and root != root.parent:
+    root = root.parent
+sys.path.insert(0, str(root))
+
+import copy, math, random, time
+import torch
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+from minitf import check, viz
+from minitf.data import CharVocab, FORMATS, make_batch, sample_batch, make_test_set, random_pair
+from minitf.transformer import Transformer
+
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+vocab = CharVocab()
+print("device:", device, "| vocabulary size:", len(vocab))
+
+#%% md
+## 1. The data
+
+The task: translate a human-written date into ISO format. There are 10 input formats and dates from 1900 to 2099. Tokens are **characters**.
+
+#%% code
+rng = random.Random(0)
+for fmt in FORMATS:
+    src, tgt, _ = random_pair(rng, fmt)
+    print(f"{fmt:>16}:  {src:<32} ->  {tgt}")
+
+#%% code
+src, tgt = make_batch([random_pair(rng) for _ in range(3)], vocab)
+print("src:", tuple(src.shape), "(B, S)\n", src)
+print("tgt:", tuple(tgt.shape), "(B, T)  starts with <bos>=1, ends with <eos>=2, padded with <pad>=0\n", tgt)
+print("decoded back:", [vocab.decode(s) for s in src])
+
+#%% md
+## 2. Teacher forcing
+
+During training, we give the decoder the **correct** previous characters and ask it to predict the **next** one at every position:
+
+```
+tgt     = <bos> 2 0 2 6 - 1 1 - 2 4 <eos>
+tgt_in  = <bos> 2 0 2 6 - 1 1 - 2 4          ← decoder input  (drop the last token)
+tgt_out =       2 0 2 6 - 1 1 - 2 4 <eos>    ← what it must predict at each position (drop the first)
+```
+
+All 11 predictions are trained in **one forward pass, in parallel**. That's only possible because the causal mask stops position *t* from seeing `tgt_in[t+1:]`. This parallelism is a big reason Transformers replaced RNNs, which must process one step at a time even during training.
+
+### ✍️ Your turn: `train_step`
+1. Split `tgt` into `tgt_in` and `tgt_out` (slicing on dim 1).
+2. `logits = model(src, tgt_in)` has shape `(B, T, V)`.
+3. Cross-entropy needs `(N, V)` logits and `(N,)` targets, so flatten with `.reshape(-1, V)` and `.reshape(-1)`. Pass **`ignore_index=vocab.pad_id`** so we don't train the model to predict padding.
+4. `zero_grad`, `backward`, `step`. Return `loss.item()`.
+
+#%% code
+def train_step(model, optimizer, src, tgt):
+    ### TODO
+    tgt_in, tgt_out = tgt[:, :-1], tgt[:, 1:]
+    logits = model(src, tgt_in)
+    loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), tgt_out.reshape(-1), ignore_index=vocab.pad_id)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    return loss.item()
+    ### END
+
+#%% code
+torch.manual_seed(0);
+_m = Transformer(len(vocab))
+_src, _tgt = make_batch([random_pair(random.Random(i)) for i in range(8)], vocab)
+_tgt[0, -1] = vocab.pad_id   # make sure some padding is present
+_logits = copy.deepcopy(_m)(_src, _tgt[:, :-1])
+_expected = F.cross_entropy(_logits.reshape(-1, len(vocab)), _tgt[:, 1:].reshape(-1), ignore_index=0).item()
+_got = train_step(_m, torch.optim.Adam(_m.parameters(), lr=1e-3), _src, _tgt)
+check.close("loss returned by train_step", _got, _expected,
+            hint="tgt_in = tgt[:, :-1], tgt_out = tgt[:, 1:], and ignore_index=vocab.pad_id.")
+_l = [train_step(_m, torch.optim.Adam(_m.parameters(), lr=1e-3), _src, _tgt) for _ in range(30)]
+check.equal("loss goes down when training on one batch", _l[-1] < _l[0] * 0.7, True)
+
+#%% md
+## 3. Train (~30–60 seconds)
+
+The training loop is written for you. It draws a **fresh random batch** every step from ~730,000 possible (date, format) pairs, so the model can't memorise and has to learn the rules.
+
+> The paper also uses a learning-rate **warm-up** schedule and **label smoothing** (0.1). Our model is tiny, so plain Adam is enough.
+
+#%% code
+def train(model, steps=1500, batch_size=128, lr=1e-3, seed=0, log_every=250, verbose=True):
+    rng = random.Random(seed)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model.train()
+    losses, t0 = [], time.time()
+    for step in range(1, steps + 1):
+        src, tgt = sample_batch(batch_size, vocab, rng, device)
+        losses.append(train_step(model, optimizer, src, tgt))
+        if verbose and step % log_every == 0:
+            print(f"step {step:>5}  loss {sum(losses[-50:]) / 50:.4f}  ({time.time() - t0:.0f}s)")
+    return losses
+
+torch.manual_seed(0);
+model = Transformer(len(vocab), d_model=64, n_heads=4, n_layers=2, d_ff=256).to(device)
+print(f"{sum(p.numel() for p in model.parameters()):,} parameters; initial loss should be ≈ ln({len(vocab)}) = {math.log(len(vocab)):.2f}")
+losses = train(model)
+viz.plot_curves({"train loss": losses}, title="training loss", logy=True)
+
+#%% md
+## 4. Inference: greedy decoding
+
+At inference time there's no correct answer to feed in. We **generate one character at a time**:
+
+```
+step 1:  decoder input <bos>               → predict "2"
+step 2:  decoder input <bos> 2             → predict "0"
+step 3:  decoder input <bos> 2 0           → predict "2"   ... until <eos>
+```
+**Training:** one parallel pass. **Inference:** one pass per output token, in sequence. (The encoder still runs only **once**: its output `memory` is reused at every step.)
+
+### ✍️ Your turn: `greedy_decode`
+1. `memory, src_mask = model.encode(src)`, done once.
+2. Start `ys` as a `(B, 1)` tensor filled with `vocab.bos_id` (`torch.full`, on `src.device`).
+3. Repeat `max_len` times: `logits = model.decode(ys, memory, src_mask)`. Take the **last position's** logits (`logits[:, -1]`), pick the `argmax`, and append it to `ys` with `torch.cat(..., dim=1)`.
+4. Return `ys[:, 1:]` (drop `<bos>`). `vocab.decode` stops at `<eos>` for you.
+
+#%% code
+@torch.no_grad()
+def greedy_decode(model, src, max_len=11):
+    model.eval()
+    ### TODO
+    memory, src_mask = model.encode(src)
+    ys = torch.full((src.size(0), 1), vocab.bos_id, dtype=torch.long, device=src.device)
+    for _ in range(max_len):
+        logits = model.decode(ys, memory, src_mask)
+        next_token = logits[:, -1].argmax(dim=-1, keepdim=True)
+        ys = torch.cat([ys, next_token], dim=1)
+    return ys[:, 1:]
+    ### END
+
+#%% code
+def translate(text, model=None):
+    model = model or globals()["model"]
+    src = torch.tensor([vocab.encode(text.lower())], device=device)
+    return vocab.decode(greedy_decode(model, src)[0])
+
+test_set = make_test_set(n_per_format=100)
+
+def evaluate(model):
+    """Exact-match accuracy on the fixed test set: overall and per format."""
+    src, _ = make_batch(test_set, vocab, device)
+    preds = [vocab.decode(p) for p in greedy_decode(model, src)]
+    per_fmt = {}
+    for (s, t, fmt), p in zip(test_set, preds):
+        per_fmt.setdefault(fmt, []).append(p == t)
+    per_fmt = {f: sum(v) / len(v) for f, v in per_fmt.items()}
+    return sum(per_fmt.values()) / len(per_fmt), per_fmt
+
+for text in ["tuesday, november 24, 2026", "1/1/2000", "the 3rd of july, 1969", "2049/12/31"]:
+    print(f"{text:<30} -> {translate(text)}")
+acc, per_fmt = evaluate(model)
+print(f"\ntest accuracy: {acc:.1%}")
+check.equal("test accuracy above 95%", acc > 0.95, True,
+            hint="If training loss went low but accuracy is bad, the bug is probably in greedy_decode.")
+
+#%% md
+🎉 **You built and trained a Transformer from scratch.** Try your own dates:
+
+#%% code
+print(translate("24 nov 2026"))
+print(translate("sat 1 jan 2000"))
+
+#%% md
+> **Beyond greedy:** *beam search* keeps the k best partial outputs instead of 1 (the paper uses k=4 for translation). LLM chat uses *sampling* with a temperature, top-k or top-p. And the **KV cache**: at each step, the keys and values of past tokens don't change, so real implementations store them instead of recomputing the whole prefix. Our `greedy_decode` recomputes everything each step, which is $O(T^2)$ instead of $O(T)$ steps of work. That's fine for 11 characters.
+
+## 5. Look inside: what does the model attend to?
+
+We generate an output, then run the decoder once more over it to collect each layer's attention weights (your `MultiHeadAttention` saves them in `.last_attn`).
+
+#%% code
+@torch.no_grad()
+def run_and_collect(text):
+    src = torch.tensor([vocab.encode(text)], device=device)
+    output = translate(text)
+    tgt_in = torch.tensor([[vocab.bos_id] + vocab.encode(output)], device=device)
+    model.eval()
+    model(src, tgt_in)
+    src_labels = vocab.tokens(src[0])
+    out_labels = ["→" + c for c in output] + ["→<eos>"]     # row t = the decoder position predicting this char
+    return output, src_labels, out_labels
+
+def show_cross_attention(text, layer=-1, per_head=False):
+    output, src_labels, out_labels = run_and_collect(text)
+    w = model.decoder_layers[layer].cross_attn.last_attn[0].cpu()           # (h, T_out, T_in)
+    title = f"cross-attention, decoder layer {layer}: '{text}' → '{output}'"
+    if per_head:
+        viz.plot_attention_heads(w, src_labels, out_labels, title=title)
+    else:
+        viz.plot_attention(w.mean(0), src_labels, out_labels, title=title + " (mean of heads)", annotate=False)
+
+show_cross_attention("tuesday, november 24, 2026", layer=-1)
+
+#%% code
+show_cross_attention("24/11/2026", layer=-1, per_head=True)
+
+#%% code
+show_cross_attention("2026/11/24", layer=-1)
+show_cross_attention("the 3rd of july, 1969", layer=-1)
+
+#%% md
+### ✍️ Your turn: write down what you see
+Edit this cell with your observations. Look at the plots above and try other dates and layers (`layer=0`).
+1. While the model writes the **year** digits, which input characters does it look at? Does that change between `24/11/2026` and `2026/11/24`, where the year is in a completely different place?
+2. Does any head look at the **weekday** ("tuesday")? Why might it ignore it?
+3. For the **month** digits `11`, where does it look in the text formats (`november`) compared with the numeric ones (`/11/`)? How many letters of "november" does it need?
+4. Do different heads specialise?
+
+*Your notes:*
+-
+
+#%% md
+**Encoder self-attention** (input looking at input) and **decoder self-attention** (output looking at its own past, so you'll see the causal triangle):
+
+#%% code
+text = "24/11/2026"
+output, src_labels, out_labels = run_and_collect(text)
+viz.plot_attention_heads(model.encoder_layers[0].self_attn.last_attn[0].cpu(), src_labels, src_labels,
+                         title=f"encoder self-attention, layer 0: '{text}'")
+viz.plot_attention(model.decoder_layers[0].self_attn.last_attn[0].mean(0).cpu(),
+                   ["<bos>"] + list(output), ["<bos>"] + list(output),
+                   title="decoder self-attention, layer 0 (mean of heads): note the causal triangle", annotate=False)
+
+#%% md
+### What did the embeddings learn?
+Cosine similarity between the learned **source embeddings** of the digits. (These are static embeddings, like Part 1. Everything contextual comes from the attention layers.)
+
+#%% code
+digits = list("0123456789")
+E = model.src_embed.weight.detach().cpu()[[vocab.stoi[c] for c in digits]]
+E = E / E.norm(dim=-1, keepdim=True)
+viz.plot_matrix(E @ E.T, "cosine similarity of learned digit embeddings", digits, digits, annotate=True, cmap="RdBu", vmin=-1, vmax=1)
+
+#%% md
+## 6. Break it: ablations
+
+The best way to understand a component is to **remove it and measure**. Each experiment trains a fresh model (~30–60 s each).
+
+### ✍️ Before running: write your predictions
+Edit this cell. What test accuracy do you expect for each one, and why?
+- **No positional encoding:**
+- **1 head instead of 4** (same d_model):
+- **1 layer instead of 2:**
+- **tiny d_model = 16:**
+
+#%% code
+def run_experiment(steps=1500, **cfg):
+    torch.manual_seed(0)
+    m = Transformer(len(vocab), **cfg).to(device)
+    train(m, steps=steps, verbose=False)
+    return m, evaluate(m)
+
+experiments = {
+    "baseline":       dict(),
+    "no positions":   dict(use_positions=False),
+    "1 head":         dict(n_heads=1),
+    "1 layer":        dict(n_layers=1),
+    "d_model = 16":   dict(d_model=16, d_ff=64),
+}
+results, models = {}, {}
+for name, cfg in experiments.items():
+    t0 = time.time()
+    models[name], results[name] = run_experiment(**cfg)
+    print(f"{name:<14} accuracy {results[name][0]:6.1%}   ({time.time() - t0:.0f}s)")
+
+#%% code
+print(f"{'format':<16}" + "".join(f"{n:>14}" for n in results))
+for fmt in FORMATS:
+    print(f"{fmt:<16}" + "".join(f"{r[1][fmt]:>14.0%}" for r in results.values()))
+
+#%% md
+### Dig into the no-position model
+Which **characters** of the output does it get right? The plot below shows accuracy at each output position.
+
+#%% code
+@torch.no_grad()
+def position_accuracy(m):
+    src, tgt = make_batch(test_set, vocab, device)
+    pred = greedy_decode(m, src)[:, :10]
+    return (pred == tgt[:, 1:11]).float().mean(0).cpu()
+
+labels = list("YYYY-MM-DD")
+fig, ax = plt.subplots(figsize=(8, 3))
+for name in ["baseline", "no positions"]:
+    ax.plot(position_accuracy(models[name]).numpy(), "o-", label=name)
+ax.set_xticks(range(10)); ax.set_xticklabels(labels); ax.set_ylabel("accuracy"); ax.set_ylim(0, 1.05)
+ax.set_title("per-character accuracy"); ax.legend(); ax.grid(alpha=.3); plt.show()
+for text in ["24/11/2026", "2026/11/24", "11/24/2026"]:
+    print(f"no-positions model: {text:<12} -> {translate(text, models['no positions'])}")
+
+#%% md
+**Why it fails.** Without positional encoding, the encoder sees the input as a **bag of characters**. `24/11/2026` and `2026/11/24` contain **exactly the same characters**, so the encoder produces exactly the same vectors for them. "Is this 12 or 21?" can't be answered either. The dashes and the century digits are still right, because they are almost the same for every date.
+
+> 🧠 **A subtle point that impresses interviewers:** the *decoder* had no positional encoding either in this experiment, yet it still produced well-formed `YYYY-MM-DD` outputs. Why? Its **causal mask leaks position**: the token at position *t* can attend to exactly *t + 1* tokens, so it can work out how far along it is. This is why some decoder-only LLMs work without any positional encoding ("NoPE"). The encoder has no mask, so it gets no such signal.
+
+### ✍️ Your turn: conclusions
+Edit this cell. Compare the results with your predictions. Which component mattered most here? Why do you think 1 head did fine or badly on this task?
+
+*Your conclusions:*
+-
+
+## 7. Out of distribution: find the limits
+The model has only ever seen years 1900–2099 and these 10 formats.
+
+#%% code
+for text in ["24 nov 2150", "24 nov 1850", "nov 24th 2026", "2026 nov 24", "24-11-2026"]:
+    print(f"{text:<16} -> {translate(text)}")
+try:
+    translate("24 Nov 2026!")
+except ValueError as e:
+    print("\nValueError:", e)
+
+#%% md
+The model only learned the patterns it was trained on. Inputs outside them fail, often **confidently**. And it can't even *read* `!`, because there's no token for it. That's the problem **subword tokenizers** like BPE solve (Sennrich et al., in your folder), and **byte-level BPE** (GPT-2 onward) solves it completely: any string can be written as bytes, so nothing is ever out of vocabulary.
+
+## ✅ Check your understanding
+
+<details><summary>1. What is teacher forcing? How are tgt_in and tgt_out built?</summary>
+
+The decoder input is the ground-truth target shifted right (starting with `<bos>`), and the targets are the same sequence shifted left (ending with `<eos>`). All positions are trained in parallel, and the causal mask prevents cheating.
+</details>
+
+<details><summary>2. What is exposure bias?</summary>
+
+During training the decoder only ever sees *correct* prefixes. At inference it sees its *own* predictions, so one early mistake leads to inputs it never saw in training, and errors can snowball.
+</details>
+
+<details><summary>3. Why is training parallel but inference sequential?</summary>
+
+In training, the whole target is known, so every position is computed in one pass. In generation, token t+1 depends on the token t just generated, so you need one forward pass per new token.
+</details>
+
+<details><summary>4. What is the KV cache and why does it help?</summary>
+
+The keys and values of past tokens don't change as generation goes on. Caching them means each new step only computes q, k, v for the newest token and attends over the cache, so each step costs O(T) instead of reprocessing the O(T) prefix through every layer.
+</details>
+
+<details><summary>5. Why ignore_index for padding in the loss?</summary>
+
+Pad positions aren't real targets. Including them would train the model to predict `<pad>` and distort the loss and gradients.
+</details>
+
+<details><summary>6. Greedy vs. beam search vs. sampling?</summary>
+
+Greedy picks the argmax at each step (fast, can miss better sequences). Beam search keeps the k best partial sequences (good for translation). Sampling draws from the softmax with temperature, top-k or top-p (more diverse, used for chat).
+</details>
+
+<details><summary>7. What happened without positional encoding, and why?</summary>
+
+Accuracy collapsed, because the encoder became order-blind (permutation-equivariant). Same characters in a different order give the same representation. The decoder kept some order information through its causal mask.
+</details>
+
+**Next: `06_interview_drill.ipynb`**

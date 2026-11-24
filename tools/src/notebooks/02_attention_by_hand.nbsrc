@@ -1,0 +1,271 @@
+#%% md
+# Part 2 — Attention, by hand
+
+⏱ **~2 hours** · 📁 you write code in **`minitf/attention.py`** · 📄 paper §3.2.1 · 📺 CME295 Lecture 1, *"Self-attention"*
+
+**After this notebook you can:**
+- write $\text{Attention}(Q,K,V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V$ from memory and explain every symbol
+- explain what queries, keys and values are *for*
+- show with an experiment **why** we divide by $\sqrt{d_k}$
+- build padding and causal masks and say why masked scores are set to $-\infty$
+- explain self- vs cross-attention and why attention costs $O(T^2)$
+
+**New workflow from here on:** your code goes into real Python files in `minitf/`, the way a real project is organised. Open **`minitf/attention.py`** in your editor next to this notebook. When you save it, this notebook picks up the change automatically (that's what `%autoreload` does), so you just re-run the check cell.
+
+#%% code
+# Setup: run this cell first.
+%load_ext autoreload
+%autoreload 2
+import sys, pathlib
+root = pathlib.Path.cwd()
+while not (root / "minitf").is_dir() and root != root.parent:
+    root = root.parent
+sys.path.insert(0, str(root))
+
+import math
+import torch
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+from minitf import check, viz
+from minitf.attention import scaled_dot_product_attention, make_padding_mask, make_causal_mask
+torch.manual_seed(0);
+
+#%% md
+## 1. The idea: every token asks a question
+
+The problem left over from Part 1: "bank" has one vector whatever its context. **Fix:** let every token update its vector by **looking at the other tokens** and **pulling in information from the relevant ones**.
+
+Each token produces three vectors:
+
+| | role | everyday version |
+|---|---|---|
+| **query** $q$ | what I'm looking for | the search you type into a library catalogue |
+| **key** $k$ | what I contain, i.e. how others can find me | the title on each book's spine |
+| **value** $v$ | what I hand over if I'm chosen | the book's contents |
+
+Token *i*'s new vector is a **weighted average of every value**. The weights say how well $q_i$ matches each $k_j$:
+
+$$\text{out}_i = \sum_j \underbrace{\text{softmax}_j\!\left(\frac{q_i \cdot k_j}{\sqrt{d_k}}\right)}_{\text{weight } w_{ij}} \, v_j$$
+
+> 💡 **Attention is a *soft* dictionary lookup.** A Python `dict` returns the value of the **one** key that matches exactly. Attention returns a **blend of all** values, weighted by how well each key matches. Because the blend is smooth, it's differentiable, so the model can **learn** what to look for.
+
+Written for all tokens at once with matrices (rows are tokens), this is the paper's equation (1):
+
+$$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right) V$$
+
+## 2. Work it out on paper first ✏️
+
+Three tokens with $d_k = 4$ (so $\sqrt{d_k} = 2$):
+
+```
+        query q          key k           value v
+tok 0   [1, 1, 0, 0]     [1, 1, 0, 0]    [10,  0]
+tok 1   [0, 0, 1, 1]     [0, 0, 1, 1]    [ 0, 10]
+tok 2   [1, 0, 1, 0]     [0, 0, 0, 0]    [ 5,  5]
+```
+
+### ✍️ Your turn, with pen and paper
+Fill in the **scaled scores** matrix: `scores[i][j] = (q_i · k_j) / 2`. Row = the token doing the looking, column = the token being looked at.
+
+#%% code
+### TODO
+scores_by_hand = [[1.0, 0.0, 0.0],
+                  [0.0, 1.0, 0.0],
+                  [0.5, 0.5, 0.0]]
+#> scores_by_hand = [[None, None, None],    # row 0: q0·k0/2, q0·k1/2, q0·k2/2
+#>                   [None, None, None],
+#>                   [None, None, None]]
+### END
+
+#%% code
+Q = torch.tensor([[1., 1, 0, 0], [0, 0, 1, 1], [1, 0, 1, 0]])
+K = torch.tensor([[1., 1, 0, 0], [0, 0, 1, 1], [0, 0, 0, 0]])
+V = torch.tensor([[10., 0], [0, 10], [5, 5]])
+check.close("scores_by_hand", scores_by_hand, Q @ K.T / 2)
+
+#%% md
+Now predict, in words: which value will token 0 mostly take? And token 2? Then write the function.
+
+## 3. ✍️ Write `scaled_dot_product_attention`
+
+Open **`minitf/attention.py`** and fill in the three steps of `scaled_dot_product_attention`. Each step is one or two lines. Write it for **any number of leading batch dims** (`...`), so use `k.transpose(-2, -1)`, not `k.T`.
+
+Then run the check. It compares your function against PyTorch's built-in `F.scaled_dot_product_attention`.
+
+#%% code
+check.check_sdpa(scaled_dot_product_attention)
+
+#%% code
+out, weights = scaled_dot_product_attention(Q, K, V)
+viz.plot_attention(weights, x_labels=["tok0", "tok1", "tok2"], y_labels=["tok0", "tok1", "tok2"],
+                   title="weights = softmax(QKᵀ/√d_k)")
+print("out =\n", out)
+
+#%% md
+**Read the plot.** Token 0's query matches key 0, so it takes mostly $v_0 = [10, 0]$. Token 2's query matches keys 0 and 1 equally, so its output is a blend of their values. Key 2 is all zeros (it "advertises nothing"), so nobody attends to it much. Notice also: **each row sums to 1**, and the matrix is **not symmetric**.
+
+## 4. Why divide by $\sqrt{d_k}$? An experiment
+
+The paper says (§3.2.1): *for large $d_k$, the dot products grow large in magnitude, pushing the softmax into regions where it has extremely small gradients.* Let's check that.
+
+If $q$ and $k$ have $d_k$ independent components with mean 0 and variance 1, then $q \cdot k = \sum_{i=1}^{d_k} q_i k_i$ is a sum of $d_k$ terms that each have variance 1. So its **variance is $d_k$** and its standard deviation is $\sqrt{d_k}$.
+
+### ✍️ Your turn: measure it
+Draw 10,000 random query/key pairs with `d_k = 256` and compute the variance of their dot products, without and with the scaling.
+
+#%% code
+d_k = 256
+q = torch.randn(10000, d_k)
+k = torch.randn(10000, d_k)
+### TODO
+dots = (q * k).sum(dim=-1)            # 10,000 dot products
+var_unscaled = dots.var().item()
+var_scaled = (dots / math.sqrt(d_k)).var().item()
+#> var_unscaled = None   # TODO: variance of the 10,000 dot products q_i · k_i
+#> var_scaled = None     # TODO: same after dividing by sqrt(d_k)
+### END
+print(f"variance unscaled: {var_unscaled:.1f}   scaled: {var_scaled:.2f}")
+
+#%% code
+check.equal("unscaled variance ≈ d_k", abs(var_unscaled - d_k) < 0.1 * d_k, True)
+check.equal("scaled variance ≈ 1", abs(var_scaled - 1) < 0.1, True)
+
+#%% md
+What does that do to softmax? Below, one query looks at 10 random keys. We measure the **largest attention weight** (1.0 means one-hot, "winner takes all") and the **size of the gradient** flowing back through the softmax.
+
+#%% code
+def softmax_stats(d_k, scale, trials=2000):
+    q = torch.randn(trials, 1, d_k)
+    k = torch.randn(trials, 10, d_k)
+    scores = (q @ k.transpose(-2, -1)).squeeze(1)            # (trials, 10)
+    if scale:
+        scores = scores / math.sqrt(d_k)
+    scores.requires_grad_(True)
+    w = torch.softmax(scores, dim=-1)
+    (w * torch.randn_like(w)).sum().backward()                # some loss that depends on w
+    return w.max(-1).values.mean().item(), scores.grad.norm(dim=-1).mean().item()
+
+dims = [4, 16, 64, 256, 1024]
+stats = {s: [softmax_stats(d, s) for d in dims] for s in (False, True)}
+fig, axes = plt.subplots(1, 2, figsize=(11, 3.5))
+for s, name in [(False, "no scaling"), (True, "÷ √d_k")]:
+    axes[0].plot(dims, [m for m, g in stats[s]], "o-", label=name)
+    axes[1].plot(dims, [g for m, g in stats[s]], "o-", label=name)
+axes[0].set(xscale="log", xlabel="d_k", ylabel="largest weight", title="softmax becomes one-hot without scaling")
+axes[1].set(xscale="log", yscale="log", xlabel="d_k", ylabel="gradient size", title="...and its gradients vanish")
+for ax in axes: ax.legend(); ax.grid(alpha=.3)
+plt.tight_layout(); plt.show()
+
+#%% md
+**Conclusion.** Without scaling, larger heads give larger scores. The softmax then saturates into an almost one-hot vector, and its gradient becomes tiny, so learning stalls. Dividing by $\sqrt{d_k}$ keeps the scores at variance ≈ 1 **whatever the head size**, so the softmax stays in the range where it can learn. (This is the same effect you saw in Part 0: `[10, 20, 30]` gave a near one-hot softmax.)
+
+## 5. Masks: forbidding some connections
+
+There are two reasons a token must **not** look at another token:
+
+1. **Padding.** Sentences in a batch have different lengths, so short ones are filled with `<pad>`. Real tokens must ignore pads.
+2. **Causality.** When the decoder predicts token *t*, it must not see tokens after *t*, because those are the answers.
+
+**How:** set the blocked **scores** to $-\infty$ **before** the softmax. Then $e^{-\infty} = 0$, the blocked weight is exactly 0, and the remaining weights still sum to 1.
+
+<details><summary>🤔 Why not just set the <em>weights</em> to 0 after the softmax?</summary>
+
+The row would then sum to less than 1 (the output shrinks), and the blocked tokens still affected the normalisation of the others. Masking the scores renormalises automatically.
+</details>
+
+### ✍️ Your turn: in `minitf/attention.py`, write `make_padding_mask` and `make_causal_mask`
+
+#%% code
+check.check_padding_mask(make_padding_mask)
+check.check_causal_mask(make_causal_mask)
+
+#%% code
+ids = torch.tensor([[5, 6, 7, 8, 0, 0],     # 4 real tokens + 2 pads
+                    [5, 6, 0, 0, 0, 0]])    # 2 real tokens + 4 pads
+pad_mask = make_padding_mask(ids, pad_id=0)        # (2, 1, 1, 6)
+causal = make_causal_mask(6)                       # (6, 6)
+both = causal & pad_mask                           # broadcasting -> (2, 1, 6, 6)
+print("shapes:", tuple(pad_mask.shape), tuple(causal.shape), tuple(both.shape))
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
+viz.plot_matrix(pad_mask[0, 0].expand(6, 6).float(), "padding mask (sentence 0)", ax=axes[0], colorbar=False)
+viz.plot_matrix(causal.float(), "causal mask", ax=axes[1], colorbar=False)
+viz.plot_matrix(both[0, 0].float(), "causal & padding (sentence 0)", ax=axes[2], colorbar=False)
+for ax in axes: ax.set(xlabel="key (looked at)", ylabel="query (looking)")
+plt.tight_layout(); plt.show()
+
+#%% md
+Now use your masks. Every weight on a pad key or a future key should be **exactly 0**:
+
+#%% code
+x = torch.randn(2, 6, 8)                             # pretend token vectors
+out, w = scaled_dot_product_attention(x, x, x, mask=both[:, 0])
+viz.plot_attention(w[1], title="sentence 1 (2 real tokens): causal + padding")
+
+#%% md
+⚠️ **Fully masked rows.** If a query is allowed to see *no* keys, every score is $-\infty$, and softmax gives $0/0 =$ `NaN`. In the plot above, the pad *queries* (rows 2–5) can still see the real tokens, so this doesn't happen. Real implementations guard against it.
+
+## 6. Self-attention vs. cross-attention: same function, different inputs
+
+- **Self-attention:** $Q$, $K$ and $V$ all come from the **same** sequence, so tokens look at each other.
+- **Cross-attention** (encoder-decoder models): $Q$ comes from the **decoder**, and $K, V$ come from the **encoder output**. It answers *"while writing output token t, which input tokens should I look at?"*
+
+So $T_q$ and $T_k$ can be different. Your function already handles that:
+
+#%% code
+q = torch.randn(1, 4, 8)      # 4 output tokens doing the looking
+kv = torch.randn(1, 7, 8)     # 7 input tokens being looked at
+out, w = scaled_dot_product_attention(q, kv, kv)
+print("out:", tuple(out.shape), " weights:", tuple(w.shape), " <- (T_q, T_k) = (4, 7)")
+
+#%% md
+## 7. The cost: why attention is $O(T^2)$
+
+The weights matrix has **one entry for every pair** of tokens: $T \times T$. Computing $QK^\top$ costs $O(T^2 d)$, and storing it costs $O(T^2)$ memory **per head, per layer**.
+
+#%% code
+for T in [512, 4_096, 32_768, 131_072]:
+    gb = T * T * 4 / 1e9      # float32 = 4 bytes
+    print(f"T = {T:>7,}: one attention matrix = {gb:10.3f} GB")
+
+#%% md
+This is why long context is hard, and why **FlashAttention** exists: it computes exactly the same result in tiles, without ever storing the full $T \times T$ matrix. Sparse and linear attention change the computation itself to avoid $T^2$.
+
+## ✅ Check your understanding
+
+<details><summary>1. Write the attention formula and give the shape of every intermediate result for Q (T_q, d_k), K (T_k, d_k), V (T_k, d_v).</summary>
+
+$QK^\top$: (T_q, T_k) → divide by $\sqrt{d_k}$ → softmax over the last dim: (T_q, T_k), rows sum to 1 → @ V: (T_q, d_v).
+</details>
+
+<details><summary>2. What are Q, K and V intuitively, and why have separate keys and values?</summary>
+
+Query: what I'm looking for. Key: what I offer for matching. Value: what I actually pass on. Keeping key and value separate lets a token be *found* by one property (e.g. "I'm a noun") while *passing on* different information (e.g. its meaning).
+</details>
+
+<details><summary>3. Why divide by √d_k (and not d_k)?</summary>
+
+With unit-variance components, $q\cdot k$ has variance $d_k$. Dividing by $\sqrt{d_k}$ (the standard deviation) brings it back to variance 1. Large scores saturate the softmax and make its gradients vanish. Dividing by $d_k$ would over-shrink the scores, toward a uniform average.
+</details>
+
+<details><summary>4. Why −∞ (and not 0) for masked scores?</summary>
+
+A score of 0 still gives weight $e^0/\sum > 0$. Only $-\infty$ gives exactly 0 weight after the softmax, and the other weights still sum to 1.
+</details>
+
+<details><summary>5. Is the attention matrix symmetric? Do rows or columns sum to 1?</summary>
+
+Not symmetric in general ($q_i\cdot k_j \ne q_j \cdot k_i$ once $W^Q \ne W^K$). **Rows** sum to 1, because each query distributes its attention.
+</details>
+
+<details><summary>6. What's the time and memory complexity of self-attention in sequence length T?</summary>
+
+$O(T^2 d)$ time, $O(T^2)$ memory for the weights (per head, per layer). Compare an RNN: $O(T d^2)$ time, but sequential, so it can't run in parallel across positions.
+</details>
+
+<details><summary>7. What happens if a whole row of the mask is False?</summary>
+
+All scores are −∞, so softmax computes 0/0 = NaN, and the NaN spreads through the whole network.
+</details>
+
+**Next: `03_multihead_and_position.ipynb`**

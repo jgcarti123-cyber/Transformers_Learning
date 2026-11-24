@@ -1,0 +1,233 @@
+#%% md
+# Part 4 — Assemble the Transformer
+
+⏱ **~3 hours** · 📁 you write code in **`minitf/transformer.py`** · 📄 paper §3.1, §3.3, §3.4, Figure 1
+
+**After this notebook you can:**
+- draw the encoder-decoder Transformer from memory and give the shape at every arrow
+- explain what the feed-forward network, residual connections and LayerNorm are for
+- explain where Q, K and V come from in each of the three attention layers
+- prove that your decoder can't "cheat" by looking at the future
+- count where the parameters live
+
+#%% code
+# Setup: run this cell first.
+%load_ext autoreload
+%autoreload 2
+import sys, pathlib
+root = pathlib.Path.cwd()
+while not (root / "minitf").is_dir() and root != root.parent:
+    root = root.parent
+sys.path.insert(0, str(root))
+
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from minitf import check, viz
+from minitf.transformer import FeedForward, EncoderBlock, DecoderBlock, Transformer
+torch.manual_seed(0);
+
+#%% md
+## The map (the paper's Figure 1, with our task)
+
+```
+     source: "24 nov 2026"                          target so far: <bos> 2 0 2 6 -
+              │ (B, S) ids                                     │ (B, T) ids
+   src_embed × √d  +  positional enc.             tgt_embed × √d  +  positional enc.
+              │ (B, S, d)                                      │ (B, T, d)
+  ┌───────────▼────────────┐                   ┌───────────────▼───────────────────┐
+  │ EncoderBlock  × N      │                   │ DecoderBlock  × N                 │
+  │  1. self-attention     │                   │  1. MASKED self-attention         │
+  │     (Q,K,V = x)        │                   │     (Q,K,V = y, causal mask)      │
+  │     add & LayerNorm    │                   │     add & LayerNorm               │
+  │  2. feed-forward       │   memory          │  2. CROSS-attention               │
+  │     add & LayerNorm    │ ─────────────────►│     (Q = y, K,V = memory)         │
+  └────────────────────────┘   (B, S, d)       │     add & LayerNorm               │
+                                               │  3. feed-forward, add & LayerNorm │
+                                               └───────────────┬───────────────────┘
+                                                      Linear (d → vocab)
+                                                               │ (B, T, vocab) logits
+                                                  softmax → probability of the next character
+```
+
+**Three kinds of attention:**
+| where | queries from | keys & values from | mask |
+|---|---|---|---|
+| encoder self-attention | source | source | padding |
+| decoder masked self-attention | target so far | target so far | causal + padding |
+| decoder cross-attention | target so far | **encoder output** | source padding |
+
+## 1. The feed-forward network (FFN)
+
+$$\text{FFN}(x) = \text{ReLU}(xW_1 + b_1)W_2 + b_2, \qquad d_{ff} = 4\,d_{model} \text{ in the paper}$$
+
+It's applied to **each token on its own**. A useful way to think about it:
+- **attention moves information *between* tokens** (communication)
+- **the FFN processes information *within* each token** (computation)
+
+About ⅔ of each block's parameters are in the FFN.
+
+### ✍️ Your turn: write `FeedForward` in `minitf/transformer.py`
+
+#%% code
+check.check_ffn(FeedForward)
+
+#%% md
+## 2. Residual connections and LayerNorm: "Add & Norm"
+
+Each sub-layer (attention or FFN) is wrapped like this:
+
+$$x \leftarrow \text{LayerNorm}(x + \text{Sublayer}(x))$$
+
+- **Residual connection** (`x + ...`): the sub-layer only learns a **change** to $x$, not a whole new $x$. Gradients get a direct path back to early layers, which is what makes deep stacks trainable. It also means each token's own information is never lost.
+- **LayerNorm**: rescales **each token's vector** to mean 0 and variance 1, then applies a learned scale and shift. It keeps the numbers in a stable range layer after layer.
+
+#%% code
+ln = nn.LayerNorm(8)
+x = torch.randn(2, 3, 8) * 5 + 3                 # tokens with a big mean and spread
+y = ln(x)
+print("before: per-token mean", x.mean(-1)[0].round(decimals=2).tolist(), " std", x.std(-1, unbiased=False)[0].round(decimals=2).tolist())
+print("after:  per-token mean", y.mean(-1)[0].round(decimals=2).tolist(), " std", y.std(-1, unbiased=False)[0].round(decimals=2).tolist())
+
+#%% md
+> **Post-norm vs. pre-norm.** The paper uses *post-norm*: `LN(x + f(x))`. GPT-2, Llama and almost every modern LLM use **pre-norm**: `x + f(LN(x))`, which keeps a clean residual "highway" and trains deep models more stably (often without learning-rate warm-up). We follow the paper here. It's a favourite interview question.
+
+## 3. The encoder block
+
+### ✍️ Your turn: write `EncoderBlock`
+The check compares your block with a reference and also runs a **padding test**: putting garbage in the padded positions must not change the outputs at real positions.
+
+#%% code
+check.check_encoder_block(EncoderBlock)
+
+#%% md
+## 4. The decoder block
+
+Three sub-layers: **masked** self-attention, **cross**-attention over the encoder output (`memory`), then the FFN, each with Add & Norm.
+
+### ✍️ Your turn: write `DecoderBlock`
+The check includes a **causality test**: changing *future* target tokens must not change outputs at *earlier* positions.
+
+#%% code
+check.check_decoder_block(DecoderBlock)
+
+#%% md
+<details><summary>🤔 What would happen in training if the causal mask were missing?</summary>
+
+During training the decoder sees the whole correct target at once (*teacher forcing*, Part 5). Without the mask, position t could look at token t+1, which is the very thing it's supposed to predict. Training loss would drop to almost 0 by **copying**, and the model would be useless at inference time, when the future isn't available. A suspiciously perfect training loss is a classic symptom of a broken mask.
+</details>
+
+## 5. The full model
+
+`__init__` and `embed()` are already written in `minitf/transformer.py`. **Read them**, then write `encode` and `decode`.
+
+Why does `embed()` multiply by $\sqrt{d_{model}}$ (paper §3.4)? The embedding weights start small (std $1/\sqrt{d_{model}}$). In the paper they are shared with the output layer, which wants small weights. Multiplying by $\sqrt{d_{model}}$ brings token vectors to roughly unit scale, the same scale as the positional encodings (values in $[-1, 1]$). Without it, the position signal would swamp the token signal.
+
+### ✍️ Your turn: write `Transformer.encode` and `Transformer.decode`
+
+#%% code
+check.check_transformer(Transformer)
+
+#%% md
+## 6. Where do the parameters live?
+
+### ✍️ Your turn
+Write the parameter count of **one encoder block** as a formula in `d` and `d_ff`:
+- multi-head attention: 4 linear layers $d \to d$ with bias
+- FFN: $d \to d_{ff}$ and $d_{ff} \to d$, with biases
+- 2 LayerNorms, each with a scale and a shift of size $d$
+
+#%% code
+def encoder_block_params(d, d_ff):
+    ### TODO
+    return 4 * (d * d + d) + (d * d_ff + d_ff + d_ff * d + d) + 2 * (2 * d)
+    ### END
+
+#%% code
+count = lambda m: sum(p.numel() for p in m.parameters())
+check.equal("encoder block, d=64, d_ff=256", encoder_block_params(64, 256), count(EncoderBlock(64, 4, 256)))
+check.equal("encoder block, d=512, d_ff=2048 (paper base)", encoder_block_params(512, 2048), count(EncoderBlock(512, 8, 2048)))
+
+#%% code
+def breakdown(model):
+    groups = {}
+    for name, p in model.named_parameters():
+        key = name.split(".")[0]
+        groups[key] = groups.get(key, 0) + p.numel()
+    total = sum(groups.values())
+    for k, v in groups.items():
+        print(f"  {k:<16} {v:>12,}  ({v / total:.0%})")
+    print(f"  {'TOTAL':<16} {total:>12,}")
+
+print("Our model for Part 5:")
+breakdown(Transformer(vocab_size=44, d_model=64, n_heads=4, n_layers=2, d_ff=256))
+print("\nThe paper's base model (vocab 37,000; the paper shares one embedding matrix, so it has ~65M):")
+breakdown(Transformer(vocab_size=37000, d_model=512, n_heads=8, n_layers=6, d_ff=2048))
+
+#%% md
+## 7. A sanity check before training: the loss at initialisation
+
+A freshly initialised model knows nothing, so it should give roughly **equal probability to every token**. The cross-entropy is then $-\log(1/V) = \ln V$. If your initial loss is far from $\ln V$, something is wrong, for example a badly scaled initialisation. This is a quick check worth doing on every model you train.
+
+### ✍️ Your turn
+Compute `expected` (= $\ln V$) and the `actual` cross-entropy of the untrained model on random data. Use `F.cross_entropy(logits.reshape(-1, V), targets.reshape(-1))`.
+
+#%% code
+torch.manual_seed(0);
+V = 44
+model = Transformer(vocab_size=V)
+src = torch.randint(3, V, (32, 15))
+tgt_in = torch.randint(3, V, (32, 11))
+targets = torch.randint(3, V, (32, 11))
+### TODO
+logits = model(src, tgt_in)
+expected = math.log(V)
+actual = F.cross_entropy(logits.reshape(-1, V), targets.reshape(-1)).item()
+#> expected = None   # TODO
+#> actual = None     # TODO
+### END
+print(f"expected ≈ {expected:.3f}, actual = {actual:.3f}")
+
+#%% code
+check.equal("initial loss close to ln(V)", abs(actual - expected) < 0.5, True)
+
+#%% md
+## ✅ Check your understanding
+
+<details><summary>1. Draw the encoder-decoder Transformer and list the three attention types with their Q / K / V sources.</summary>
+
+Encoder self-attention (Q, K, V = source). Decoder masked self-attention (Q, K, V = target so far, causal mask). Cross-attention (Q = decoder, K, V = encoder output). Each is followed by Add & Norm. Each block ends with an FFN + Add & Norm. Finally a Linear layer to vocabulary logits.
+</details>
+
+<details><summary>2. Encoder-only vs. decoder-only vs. encoder-decoder: examples and uses?</summary>
+
+**Encoder-only** (BERT): bidirectional, good for understanding tasks such as classification and retrieval embeddings. **Decoder-only** (GPT, Llama, Claude): causal, generates text, and is the main LLM architecture. **Encoder-decoder** (original Transformer, T5, many translation models): read the input fully, then generate the output.
+</details>
+
+<details><summary>3. What is the FFN's role vs. attention's role?</summary>
+
+Attention mixes information across positions. The FFN transforms each position independently: it adds non-linearity and capacity, and is often described as the model's "memory" of facts. It holds about ⅔ of each block's parameters.
+</details>
+
+<details><summary>4. Why residual connections? Why LayerNorm?</summary>
+
+Residuals give gradients a direct path (deep nets train well) and let each layer learn a small change. LayerNorm keeps each token's activations at a stable scale, which makes optimisation easier.
+</details>
+
+<details><summary>5. Post-norm vs. pre-norm?</summary>
+
+Post-norm `LN(x + f(x))` is the original paper. Pre-norm `x + f(LN(x))` keeps an un-normalised residual path, which is more stable for deep models, and is used by modern LLMs (with a final LayerNorm before the output layer).
+</details>
+
+<details><summary>6. Why multiply embeddings by √d_model?</summary>
+
+The embedding weights are small (std ~1/√d, partly because they're shared with the output projection). Scaling brings them to unit scale, comparable to the positional encodings, so neither signal swamps the other.
+</details>
+
+<details><summary>7. What should the loss be at initialisation, and why check it?</summary>
+
+About ln(V), because the untrained model is close to uniform. A very different value points to a bug or a bad initialisation before you've wasted any training time.
+</details>
+
+**Next: `05_train_and_inspect.ipynb`, where you train the model and look inside it.**

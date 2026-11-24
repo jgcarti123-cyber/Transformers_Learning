@@ -1,0 +1,108 @@
+<div class="app">
+<aside class="rail" aria-label="Course navigation">
+  <a class="brand" href="#start"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span><b>Inside the Transformer</b><small>embeddings &amp; attention, hands-on</small></span></a>
+  <button class="btn menu-btn" id="menu-btn" type="button" aria-label="Open the menu">Menu</button>
+  <div class="nav-wrap">
+    <nav class="nav-group"><h4>Course · start from zero</h4>
+      <a href="#l1"><span class="n">1</span>Computers only see numbers<span class="done"></span></a>
+      <a href="#l2"><span class="n">2</span>Embeddings<span class="done"></span></a>
+      <a href="#l3"><span class="n">3</span>Attention<span class="done"></span></a>
+      <a href="#l4"><span class="n">4</span>Every word at once<span class="done"></span></a>
+      <a href="#l5"><span class="n">5</span>Word order<span class="done"></span></a>
+      <a href="#l6"><span class="n">6</span>Many heads<span class="done"></span></a>
+      <a href="#l7"><span class="n">7</span>The whole Transformer<span class="done"></span></a>
+      <a href="#l8"><span class="n">8</span>How it learns<span class="done"></span></a>
+      <a href="#l9"><span class="n">9</span>Explain it like an expert<span class="done"></span></a>
+    </nav>
+    <nav class="nav-group"><h4>Lab</h4>
+      <a href="#lab-inspector"><span class="n">◆</span>Model inspector</a>
+      <a href="#lab-attention"><span class="n">◆</span>Attention calculator</a>
+      <a href="#lab-positions"><span class="n">◆</span>Position explorer</a>
+      <a href="#lab-word2vec"><span class="n">◆</span>word2vec trainer</a>
+      <a href="#lab-bench"><span class="n">◆</span>Training &amp; ablations</a>
+      <a href="#lab-architecture"><span class="n">◆</span>Architecture calculator</a>
+      <a href="#lab-python"><span class="n">◆</span>Python scratchpad</a>
+    </nav>
+  </div>
+  <div class="rail-foot"><span id="progress-text">0 of 7 chapter quizzes passed</span><div class="progress-bar"><span id="progress-fill"></span></div></div>
+</aside>
+<main id="main">
+
+<!-- ============================== START ============================== -->
+<section class="view" id="view-start" data-title="Start">
+  <div class="hero">
+    <div>
+      <div class="eyebrow"><span class="pill">for complete beginners</span><span class="pill">9 lessons · 72 one-minute steps</span></div>
+      <h1>Inside the Transformer</h1>
+      <p class="lede">No background needed. We follow one sentence, <i>"the cat sat on the mat because it was tired"</i>, and work out, number by number, how a Transformer figures out that "it" means the cat. Every idea is a one-minute step you can poke, predict and replay.</p>
+      <p><a class="btn primary" href="#l1">Start lesson 1</a> <a class="btn" href="#lab-inspector">Or explore a real trained model</a></p>
+    </div>
+    <figure data-widget="hero-demo" style="margin:0"></figure>
+  </div>
+  <h2 class="section-title">9 lessons, from zero</h2>
+  <div class="tiles">
+    <a class="tile" href="#l1"><span class="swatch" style="background:var(--c-lin)"></span><span class="n">lesson 1</span><b>Computers only see numbers</b><span>Tokens, IDs, one-hot vectors, and the dot product.</span></a>
+    <a class="tile" href="#l2"><span class="swatch" style="background:var(--c-emb)"></span><span class="n">lesson 2</span><b>Embeddings</b><span>Meaning as a list of numbers. Similar words, nearby points.</span></a>
+    <a class="tile" href="#l3"><span class="swatch" style="background:var(--c-attn)"></span><span class="n">lesson 3</span><b>Attention</b><span>'it' asks a question, every word shows a name tag. Every number by hand.</span></a>
+    <a class="tile" href="#l4"><span class="swatch" style="background:var(--c-attn)"></span><span class="n">lesson 4</span><b>Every word at once</b><span>Q × Kᵀ, the causal mask, −∞, and why we divide by √d_k.</span></a>
+    <a class="tile" href="#l5"><span class="swatch" style="background:var(--c-pos)"></span><span class="n">lesson 5</span><b>Word order</b><span>Why attention can't see order, and position clocks.</span></a>
+    <a class="tile" href="#l6"><span class="swatch" style="background:var(--c-attn)"></span><span class="n">lesson 6</span><b>Many heads</b><span>Two questions at once: who is 'it', and what about it?</span></a>
+    <a class="tile" href="#l7"><span class="swatch" style="background:var(--c-ffn)"></span><span class="n">lesson 7</span><b>The whole Transformer</b><span>Follow 'it' through a block: residual, LayerNorm, feed-forward.</span></a>
+    <a class="tile" href="#l8"><span class="swatch" style="background:var(--c-soft)"></span><span class="n">lesson 8</span><b>How it learns</b><span>Loss, gradient descent, backprop. Train a model live and watch attention appear.</span></a>
+    <a class="tile" href="#l9"><span class="swatch" style="background:var(--c-norm)"></span><span class="n">lesson 9</span><b>Explain it like an expert</b><span>The story in 8 sentences, final quiz, interview cards.</span></a>
+  </div>
+  <div class="prose" style="max-width:var(--wide)">
+    <h2 class="section-title" style="margin-left:0">How it works</h2>
+    <p>Each lesson is 7–11 tiny steps. Each step is one of: <span class="shape ffn">Learn</span> an idea in plain words, <span class="shape soft">Try it</span> with one interaction, <span class="shape attn">Predict</span> before the answer is revealed, <span class="shape lin">Watch</span> an animation you can pause and scrub, or <span class="shape norm">The math</span> with every number worked out. Every step ends with "What just happened?". Your place is remembered in this browser.</p>
+    <p>The <b>Lab</b> (left) has a real trained Transformer, a date translator, to explore once the ideas click. Your notebooks in <code>~/Desktop/Transformer/notebooks/</code> rebuild everything in PyTorch.</p>
+  </div>
+</section>
+
+<!-- ============================== LESSONS (rendered by lessons_engine.js) ============================== -->
+<section class="view" id="view-l1" data-title="1 · Computers only see numbers" hidden></section>
+<section class="view" id="view-l2" data-title="2 · Embeddings" hidden></section>
+<section class="view" id="view-l3" data-title="3 · Attention" hidden></section>
+<section class="view" id="view-l4" data-title="4 · Every word at once" hidden></section>
+<section class="view" id="view-l5" data-title="5 · Word order" hidden></section>
+<section class="view" id="view-l6" data-title="6 · Many heads" hidden></section>
+<section class="view" id="view-l7" data-title="7 · The whole Transformer" hidden></section>
+<section class="view" id="view-l8" data-title="8 · How it learns" hidden></section>
+<section class="view" id="view-l9" data-title="9 · Explain it like an expert" hidden></section>
+
+<!-- ============================== LAB ============================== -->
+<section class="view" id="view-lab-inspector" data-title="Model inspector" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Model inspector</h1><p class="lede">Type any date. Pick any of the 5 trained models or any training snapshot. Follow it through tokens, embeddings, every encoder head, every decoding step and every cross-attention map.</p></header>
+  <figure data-widget="inspector" data-opts='{"lab":true}'></figure>
+</section>
+<section class="view" id="view-lab-attention" data-title="Attention calculator" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Attention calculator</h1><p class="lede">Equation (1) with every intermediate result on screen, plus the geometry behind it.</p></header>
+  <figure data-widget="attention-calc" data-opts='{"lab":true}'></figure>
+  <figure data-widget="qk-geometry" data-opts='{"lab":true}'></figure>
+  <figure data-widget="masks"></figure>
+</section>
+<section class="view" id="view-lab-positions" data-title="Position explorer" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Position explorer</h1><p class="lede">The sinusoidal encoding as a heatmap, as clock hands, as similarities and as rotations, plus the shuffle test.</p></header>
+  <figure data-widget="pe-explorer" data-opts='{"lab":true}'></figure>
+  <figure data-widget="permutation"></figure>
+</section>
+<section class="view" id="view-lab-word2vec" data-title="word2vec trainer" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>word2vec trainer</h1><p class="lede">Change the dimension, the window and the learning rate, retrain, and see how the space and the analogies change.</p></header>
+  <figure data-widget="w2v" data-opts='{"lab":true}'></figure>
+</section>
+<section class="view" id="view-lab-bench" data-title="Training & ablations" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Training &amp; ablations</h1><p class="lede">9 snapshots of the full model's training, and 5 architectures trained identically.</p></header>
+  <figure data-widget="timeline" data-opts='{"lab":true}'></figure>
+  <figure data-widget="ablations" data-opts='{"lab":true}'></figure>
+</section>
+<section class="view" id="view-lab-architecture" data-title="Architecture calculator" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Architecture calculator</h1><p class="lede">Every block of Figure 1, with live shapes and parameter counts for any size.</p></header>
+  <figure data-widget="architecture" data-opts='{"lab":true}'></figure>
+  <figure data-widget="mha-shapes"></figure>
+</section>
+<section class="view" id="view-lab-python" data-title="Python scratchpad" hidden>
+  <header><div class="eyebrow"><span class="pill">Lab</span></div><h1>Python scratchpad</h1><p class="lede">Real Python and NumPy, with the trained model one function call away.</p></header>
+  <figure data-widget="py-scratch"></figure>
+</section>
+
+</main>
+</div>

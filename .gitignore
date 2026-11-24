@@ -1,0 +1,14 @@
+# environments and local tooling
+.venv/
+.claude/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+
+# built web page (rebuild with: python3 web/src/build_web.py)
+web/dist/
+
+# third-party reading material (not ours to redistribute)
+*.pdf
+cme295-lecture1-transcript.txt
